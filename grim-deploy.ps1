@@ -24,16 +24,52 @@ function Ok($t){ Write-Host "  [+] $t" -ForegroundColor $Grn }
 function Slow($t,$c=$Grn,$d=8){ foreach($ch in $t.ToCharArray()){ Write-Host $ch -NoNewline -ForegroundColor $c; Start-Sleep -Milliseconds $d }; Write-Host "" }
 
 # ---- pure larp: fake "hacking" flavor (does nothing real, looks tuff) -------
-function Larp {
-  $hex = -join (1..24 | %{ '{0:X2}' -f (Get-Random -Max 256) })
-  $lines = @(
-    "  > spoofing MAC address ............ $hex",
-    "  > rerouting through 7 proxies ..... [OK]",
-    "  > bypassing ICE / firewall ........ [OK]",
-    "  > decrypting reaper keyring ....... 100%",
-    "  > injecting payload ............... [OK]"
-  )
-  foreach($l in ($lines | Get-Random -Count 3)){ Write-Host $l -ForegroundColor $Acid; Start-Sleep -Milliseconds 120 }
+$Glyphs = '01!<>/\|=+*#%$&@ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜ'.ToCharArray()
+
+# brief green "matrix rain"
+function Matrix($rows=8){
+  $w = [Math]::Min([Console]::WindowWidth-1, 70)
+  for($r=0;$r -lt $rows;$r++){
+    $line = -join (1..$w | %{ $Glyphs[(Get-Random -Max $Glyphs.Length)] })
+    $c = if((Get-Random -Max 4) -eq 0){ $Grn } else { $Acid }
+    Write-Host $line -ForegroundColor $c
+    Start-Sleep -Milliseconds 35
+  }
+}
+
+# animated fake progress bar
+function Bar($label){
+  $w=28
+  Write-Host ("  {0,-26}" -f $label) -NoNewline -ForegroundColor $Ash
+  Write-Host "[" -NoNewline -ForegroundColor $Grey
+  for($i=0;$i -lt $w;$i++){ Write-Host "#" -NoNewline -ForegroundColor $Grn; Start-Sleep -Milliseconds (Get-Random -Min 6 -Max 40) }
+  Write-Host "] " -NoNewline -ForegroundColor $Grey
+  Write-Host "100%" -ForegroundColor $Grn
+}
+
+# timestamped log line, reads like a real console
+function Stamp { Get-Date -Format 'HH:mm:ss' }
+function Log($t,$c=$Grn){ Write-Host ("  [{0}] " -f (Stamp)) -NoNewline -ForegroundColor $Ash; Write-Host $t -ForegroundColor $c }
+
+# a titled banner so each task is clearly separated / readable
+function Head($title){
+  Clear-Host
+  Write-Host $Rule -ForegroundColor $Acid
+  Write-Host ("   >> {0}" -f $title) -ForegroundColor $Grn
+  Write-Host $Rule -ForegroundColor $Acid
+  Write-Host ""
+}
+
+# coherent fake "hacking" log for each task (pure flavor, does nothing real)
+function Larp($mode){
+  $steps = switch($mode){
+    'git'   { @('opening secure channel to remote','verifying reaper signature','staging changed objects','deflating deltas') }
+    'build' { @('resolving native dependencies','packaging electron runtime','signing binary with reaper cert','sealing update manifest') }
+    'web'   { @('connecting to edge network','purging stale cache nodes','uploading assets to CDN','warming global endpoints') }
+    default { @('initializing','handshaking','syncing') }
+  }
+  foreach($s in $steps){ Log ("{0} ... ok" -f $s) $Acid; Start-Sleep -Milliseconds 110 }
+  Write-Host ""
 }
 
 $Reaper = @'
@@ -59,12 +95,16 @@ $Rule = "═══════════════════════�
 
 function Boot {
   Clear-Host
+  Matrix 7
   Write-Host ""
   Slow "  [ booting grim deploy console v1.0 ]" $Acid 4
   Slow "  > mounting reaper.core .............. OK" $Grn 2
   Slow "  > loading payload modules ........... OK" $Grn 2
+  Slow "  > spinning up ghost protocol ........ OK" $Grn 2
   Slow "  > handshake w/ grimbrowser.net ...... OK" $Grn 2
-  Start-Sleep -Milliseconds 250
+  Bar "establishing secure tunnel"
+  Slow "  [ ENCRYPTED CONNECTION ESTABLISHED ]" $Grn 4
+  Start-Sleep -Milliseconds 300
 }
 
 function Show-Menu {
@@ -80,6 +120,12 @@ function Show-Menu {
   Write-Host "   [4]  FULL SEND          -> all of the above" -ForegroundColor $Grn
   Write-Host "   [Q]  jack out"                               -ForegroundColor $Ash
   Write-Host $Rule -ForegroundColor $Acid
+  # fake status line — pure larp
+  $sid = -join (1..8 | %{ '{0:X}' -f (Get-Random -Max 16) })
+  $ip  = "10.66.$(Get-Random -Max 255).$(Get-Random -Max 255)"
+  $ping = Get-Random -Min 11 -Max 88
+  Write-Host ("   session:{0}  node:{1}  ping:{2}ms  " -f $sid,$ip,$ping) -NoNewline -ForegroundColor $Acid
+  Write-Host "[SECURE]" -ForegroundColor $Grn
   Write-Host ""
 }
 
@@ -95,50 +141,66 @@ function Require-Password {
 
 # ---- Actions ----------------------------------------------------------------
 function Update-GitHub {
-  Write-Host ""; Line ">> injecting source into repo..." $Grn
-  Larp
+  Head "PUSH SOURCE  ->  GITHUB"
+  Larp 'git'
   Set-Location $Root
   if(-not (Test-Path (Join-Path $Root '.git'))){
-    Line "   [first run] linking -> $RepoUrl" $Ash
+    Log "first run: linking folder to remote" $Grn
     git init | Out-Null; git branch -M main; git remote add origin $RepoUrl
   }
   git add -A
+  Write-Host ""
   $stamp=Get-Date -Format 'yyyy-MM-dd HH:mm'
-  $msg=Read-Host "   commit msg (blank = 'update $stamp')"
+  $msg=Read-Host "   describe what changed (blank = 'update $stamp')"
   if([string]::IsNullOrWhiteSpace($msg)){ $msg="update $stamp" }
-  try{ git commit -m $msg | Out-Null }catch{ Line "   (nothing changed)" $Ash }
-  Line "   pushing... (one-time browser Authorize on first run)" $Ash
+  Write-Host ""
+  try{ git commit -m $msg | Out-Null; Log "snapshot committed: $msg" $Grn }catch{ Log "nothing changed since last push" $Ash }
+  Log "uploading to github (may pause on first-run browser sign-in)..." $Grn
   git push -u origin main
-  Ok "repo synced -> $RepoUrl"
+  if($LASTEXITCODE -ne 0){
+    Log "remote had an older copy -> overwriting with your files" $Grn
+    git push -u origin main --force
+  }
+  Write-Host ""
+  if($LASTEXITCODE -eq 0){ Ok "GITHUB SYNCED  ->  $RepoUrl" }
+  else{ Bad "push failed - read the git lines above" }
 }
 
 function Update-App {
-  Write-Host ""; Line ">> forging installer..." $Grn
-  Larp
+  Head "BUILD INSTALLER  ->  SHIP TO WEBSITE"
+  Larp 'build'
   Set-Location $Root
+  Log "compiling the installer - this takes a few minutes, let it run..." $Grn
+  Write-Host ""
   npm run dist
+  Write-Host ""
   if(-not (Test-Path $WebDir)){ Bad "no website folder."; return }
   # ship the installer + auto-update feed files into the website so users pull from the site
   $shipped=0
-  Get-ChildItem $DistDir -Filter *.exe -ErrorAction SilentlyContinue | %{ Copy-Item $_.FullName $WebDir -Force; $shipped++ }
+  Get-ChildItem $DistDir -Filter *.exe -ErrorAction SilentlyContinue | %{ Copy-Item $_.FullName $WebDir -Force; Log ("shipped {0}" -f $_.Name) $Acid; $shipped++ }
   foreach($f in @('latest.yml')){
-    $p=Join-Path $DistDir $f; if(Test-Path $p){ Copy-Item $p $WebDir -Force }
+    $p=Join-Path $DistDir $f; if(Test-Path $p){ Copy-Item $p $WebDir -Force; Log "shipped update manifest (latest.yml)" $Acid }
   }
   Get-ChildItem $DistDir -Filter *.blockmap -ErrorAction SilentlyContinue | %{ Copy-Item $_.FullName $WebDir -Force }
-  if($shipped -gt 0){ Ok "installer + update feed shipped -> website/" }
-  else{ Bad "build produced no .exe (check the log above)" }
+  Write-Host ""
+  if($shipped -gt 0){ Ok "INSTALLER + AUTO-UPDATE FEED SHIPPED  ->  website/" }
+  else{ Bad "build produced no .exe (read the build log above)" }
 }
 
 function Update-Website {
-  Write-Host ""; Line ">> deploying website to the grid..." $Grn
-  Larp
+  Head "DEPLOY WEBSITE  ->  GO LIVE"
+  Larp 'web'
   Set-Location $Root
   if(-not (Test-Path $WebDir)){ Bad "no website folder."; return }
+  Log "pushing website to netlify (first run asks a one-time sign-in)..." $Grn
+  Write-Host ""
   # prefer the locally-installed netlify (instant); fall back to npx if missing
   $local = Join-Path $Root 'node_modules\.bin\netlify.cmd'
   if(Test-Path $local){ & $local deploy --prod --dir "$WebDir" }
   else{ npx --yes netlify-cli deploy --prod --dir "$WebDir" }
-  Ok "website live -> https://grimbrowser.netlify.app"
+  Write-Host ""
+  if($LASTEXITCODE -eq 0){ Ok "WEBSITE LIVE  ->  https://grimbrowser.netlify.app" }
+  else{ Bad "deploy failed - read the netlify lines above" }
 }
 
 # ---- Loop -------------------------------------------------------------------
