@@ -267,12 +267,12 @@
 
 <script>
 // ⚙️ Set your download link here (the installer next to this page, or a GitHub Release URL)
-const DOWNLOAD_URL = "GrimBrowser-Setup-1.0.0.exe";
+const DOWNLOAD_URL = "GrimBrowser-Setup.exe"; // stable name — never changes between versions
 const INSTALL_CMD  = "curl -fsSL https://grimbrowser.netlify.app/install.sh | bash";
 // top + nav buttons always point at the Windows installer
 ['dl-nav','dl-top'].forEach(id=>{
   const a = document.getElementById(id);
-  if(a){ a.href = DOWNLOAD_URL; a.setAttribute('download','GrimBrowser-Setup-1.0.0.exe'); }
+  if(a){ a.href = DOWNLOAD_URL; a.setAttribute('download','GrimBrowser-Setup.exe'); }
 });
 
 // ── Platform picker ──
@@ -281,7 +281,7 @@ function renderPlat(os){
   document.querySelectorAll('.plat').forEach(b=>b.classList.toggle('active', b.dataset.os===os));
   if(os==='windows'){
     platPanel.innerHTML =
-      '<a class="btn btn-primary btn-lg dl-btn" href="'+DOWNLOAD_URL+'" download="GrimBrowser-Setup-1.0.0.exe">'+
+      '<a class="btn btn-primary btn-lg dl-btn" href="'+DOWNLOAD_URL+'" download="GrimBrowser-Setup.exe">'+
       '<svg class="dl-ico" width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M3 13h10"/></svg>'+
       'Download for Windows</a>'+
       '<div class="win-note">Windows 10/11 · 108 MB · SmartScreen may pop up — click “More info → Run anyway”.</div>';

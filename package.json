@@ -36,7 +36,13 @@
     },
     "files": [
       "**/*",
-      "!tor/**"
+      "!tor/**",
+      "!website/**",
+      "!dist/**",
+      "!grim-deploy.ps1",
+      "!Grim Deploy.bat",
+      "!scripts/**",
+      "!.github/**"
     ],
     "extraResources": [
       {

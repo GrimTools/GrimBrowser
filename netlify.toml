@@ -1,0 +1,4 @@
+# Netlify config for Grim Browser's site
+# The website (and the app's auto-update feed) live in the website/ folder.
+[build]
+  publish = "website"

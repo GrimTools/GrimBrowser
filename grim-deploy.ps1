@@ -26,15 +26,38 @@ function Slow($t,$c=$Grn,$d=8){ foreach($ch in $t.ToCharArray()){ Write-Host $ch
 # ---- pure larp: fake "hacking" flavor (does nothing real, looks tuff) -------
 $Glyphs = '01!<>/\|=+*#%$&@ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜ'.ToCharArray()
 
-# brief green "matrix rain"
-function Matrix($rows=8){
-  $w = [Math]::Min([Console]::WindowWidth-1, 70)
-  for($r=0;$r -lt $rows;$r++){
-    $line = -join (1..$w | %{ $Glyphs[(Get-Random -Max $Glyphs.Length)] })
-    $c = if((Get-Random -Max 4) -eq 0){ $Grn } else { $Acid }
-    Write-Host $line -ForegroundColor $c
-    Start-Sleep -Milliseconds 35
+# cmatrix-style falling rain — bright heads, dim tails, runs for a few seconds
+function Matrix($seconds=2.5){
+  $w = [Console]::WindowWidth - 2
+  $h = [Math]::Min([Console]::WindowHeight - 2, 26)
+  if($w -lt 10 -or $h -lt 5){ return }   # window too tiny, skip the show
+  $rnd = New-Object Random
+  $heads = @{}
+  Clear-Host
+  try{ [Console]::CursorVisible = $false }catch{}
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while($sw.Elapsed.TotalSeconds -lt $seconds){
+    # spawn a few new streams each frame
+    1..3 | %{ $heads[$rnd.Next(0,$w)] = 0 } | Out-Null
+    foreach($c in @($heads.Keys)){
+      $y = $heads[$c]
+      if($y -lt $h){
+        [Console]::SetCursorPosition($c,$y)
+        Write-Host $Glyphs[$rnd.Next($Glyphs.Length)] -NoNewline -ForegroundColor Green
+        if($y -gt 0){
+          [Console]::SetCursorPosition($c,$y-1)
+          Write-Host $Glyphs[$rnd.Next($Glyphs.Length)] -NoNewline -ForegroundColor DarkGreen
+        }
+      }
+      $tail = $y - 7
+      if($tail -ge 0 -and $tail -lt $h){ [Console]::SetCursorPosition($c,$tail); Write-Host ' ' -NoNewline }
+      $heads[$c] = $y + 1
+      if(($y - 7) -ge $h){ $heads.Remove($c) | Out-Null }
+    }
+    Start-Sleep -Milliseconds 45
   }
+  try{ [Console]::CursorVisible = $true }catch{}
+  Clear-Host
 }
 
 # animated fake progress bar
@@ -95,7 +118,7 @@ $Rule = "═══════════════════════�
 
 function Boot {
   Clear-Host
-  Matrix 7
+  Matrix 2.5
   Write-Host ""
   Slow "  [ booting grim deploy console v1.0 ]" $Acid 4
   Slow "  > mounting reaper.core .............. OK" $Grn 2
