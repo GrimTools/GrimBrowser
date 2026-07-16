@@ -1,0 +1,67 @@
+{
+  "name": "grimbrowser",
+  "version": "1.0.0",
+  "description": "GrimBrowser is a privacy based browser for everything you need",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "19vs",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.18.1",
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "jimp": "^0.22.12",
+    "netlify-cli": "^26.2.0"
+  },
+  "build": {
+    "appId": "com.grimbrowser.app",
+    "productName": "GrimBrowser",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://grimbrowser.netlify.app/"
+      }
+    ],
+    "nsis": {
+      "artifactName": "GrimBrowser-Setup.${ext}"
+    },
+    "files": [
+      "**/*",
+      "!tor/**"
+    ],
+    "extraResources": [
+      {
+        "from": "tor",
+        "to": "tor",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network"
+    }
+  }
+}
