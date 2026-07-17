@@ -775,10 +775,12 @@ const searchSession = () => session.fromPartition(PARTITION);
 // Fetch via the browsing session (Tor-aware) but fall back to plain fetch if the
 // session request throws — so search never silently dies on a session quirk.
 async function searchFetch(url, opts) {
+  // Try the Tor-aware session first, but only trust a genuinely OK response —
+  // the session strips headers/ad-blocks, which can make scrape endpoints 403.
   try {
     const r = await searchSession().fetch(url, opts);
-    if (r) return r;
-  } catch (_) { /* session fetch failed — use direct */ }
+    if (r && r.ok) return r;
+  } catch (_) { /* fall through to a clean direct request */ }
   return fetch(url, opts);
 }
 

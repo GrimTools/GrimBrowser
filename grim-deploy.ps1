@@ -193,6 +193,16 @@ function Update-App {
   Head "BUILD INSTALLER  ->  SHIP TO WEBSITE"
   Larp 'build'
   Set-Location $Root
+  # auto-bump the patch version so every build is a new number -> auto-updater always fires
+  $pkgPath = Join-Path $Root 'package.json'
+  $pkg = Get-Content -Raw $pkgPath
+  if($pkg -match '"version":\s*"(\d+)\.(\d+)\.(\d+)"'){
+    $newVer = "$($Matches[1]).$($Matches[2]).$([int]$Matches[3] + 1)"
+    $pkg = $pkg -replace '("version":\s*")\d+\.\d+\.\d+(")', "`${1}$newVer`${2}"
+    [IO.File]::WriteAllText($pkgPath, $pkg)
+    Log "version bumped -> $newVer  (users on the old version will auto-update to this)" $Grn
+  } else { Log "could not read version from package.json - building anyway" $Ash }
+  Write-Host ""
   Log "compiling the installer - this takes a few minutes, let it run..." $Grn
   Write-Host ""
   npm run dist
