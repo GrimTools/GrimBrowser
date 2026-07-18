@@ -114,7 +114,7 @@
   def(navigator, 'deviceMemory', () => 4);
   def(navigator, 'webdriver', () => false);
   def(navigator, 'platform', () => 'Win32');
-  def(navigator, 'vendor', () => '');
+  def(navigator, 'vendor', () => 'Google Inc.');   // what real Chrome reports
   def(navigator, 'userAgentData', () => undefined);
   def(navigator, 'connection', () => undefined);
   def(navigator, 'plugins', () => []);
@@ -134,9 +134,96 @@
     }
   } catch (_) {}
 
-  // ── Mask the JS-visible user-agent to match the spoofed Firefox identity ──
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0';
+  // ── Present a consistent, ordinary Chrome identity ──
+  // Grim IS Chromium, so it reports Chrome. Claiming Firefox while exposing
+  // Chromium-only APIs is a mismatch sites can detect, and rare combinations are
+  // easier to track than common ones. We keep the real major version so nothing
+  // contradicts the engine, and blend in with the Chrome majority.
+  const CHROME_MAJOR = (navigator.userAgent.match(/Chrome\/(\d+)/) || [, '140'])[1];
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+    'Chrome/' + CHROME_MAJOR + '.0.0.0 Safari/537.36';
   def(navigator, 'userAgent', () => UA);
-  def(navigator, 'appVersion', () => '5.0 (Windows)');
-  def(navigator, 'oscpu', () => 'Windows NT 10.0; Win64; x64');
+  def(navigator, 'appVersion', () => UA.replace('Mozilla/', ''));
+  // NOTE: no `oscpu` override — that property only exists in Firefox, so defining
+  // it on a Chromium browser would itself be a fingerprint.
+
+  // ── Round screen size (Tor Browser's "letterboxing" idea) ──
+  // Exact resolutions like 2560x1369 are near-unique. Rounding to a coarse grid
+  // puts you in a big bucket of users sharing the same reported size.
+  try {
+    const round = (n) => Math.max(100, Math.floor(n / 100) * 100);
+    def(screen, 'width',  () => round(window.screen.width));
+    def(screen, 'height', () => round(window.screen.height));
+    def(screen, 'availWidth',  () => round(window.screen.width));
+    def(screen, 'availHeight', () => round(window.screen.height));
+    def(screen, 'colorDepth', () => 24);   // the overwhelmingly common value
+    def(screen, 'pixelDepth', () => 24);
+  } catch (_) {}
+
+  // ── Timezone → UTC ──
+  // Your timezone narrows you to a region. Tor Browser reports UTC for everyone.
+  // Kept deliberately narrow (offset + reported zone only) so date FORMATTING still
+  // works — the aggressive Intl rewrites that broke SPAs are intentionally avoided.
+  try {
+    Date.prototype.getTimezoneOffset = function () { return 0; };
+    const origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function () {
+      const o = origResolved.call(this);
+      o.timeZone = 'UTC';
+      return o;
+    };
+  } catch (_) {}
+
+  // ── Font fingerprinting ──
+  // Sites detect your installed fonts by measuring rendered text width — the exact
+  // set of fonts you have is highly identifying. Sub-pixel noise on measurements
+  // breaks the comparison while staying far too small to disturb layout.
+  try {
+    const origMeasure = CanvasRenderingContext2D.prototype.measureText;
+    CanvasRenderingContext2D.prototype.measureText = function (t) {
+      const m = origMeasure.call(this, t);
+      try {
+        const w = m.width;
+        Object.defineProperty(m, 'width', { get: () => w + (Math.random() - 0.5) * 0.01 });
+      } catch (_) {}
+      return m;
+    };
+  } catch (_) {}
+
+  // ── Speech synthesis voices ──
+  // The voice list installed on your machine varies by OS, language packs and apps,
+  // which makes it a quietly strong fingerprint. Report none.
+  try {
+    if (window.speechSynthesis) speechSynthesis.getVoices = () => [];
+  } catch (_) {}
+
+  // ── WebGL pixel readback ──
+  // Masking the GPU *name* isn't enough: a page can render a scene and read the
+  // pixels back to fingerprint the actual GPU. Noise the returned pixels.
+  try {
+    const patchRead = (proto) => {
+      const orig = proto.readPixels;
+      if (!orig) return;
+      proto.readPixels = function (x, y, w, h, fmt, type, pixels) {
+        orig.call(this, x, y, w, h, fmt, type, pixels);
+        try {
+          if (pixels && pixels.length) {
+            for (let i = 0; i < pixels.length; i += 97) {
+              pixels[i] = Math.max(0, Math.min(255, pixels[i] + (Math.random() < 0.5 ? -1 : 1)));
+            }
+          }
+        } catch (_) {}
+      };
+    };
+    if (window.WebGLRenderingContext)  patchRead(WebGLRenderingContext.prototype);
+    if (window.WebGL2RenderingContext) patchRead(WebGL2RenderingContext.prototype);
+  } catch (_) {}
+
+  // ── Blunt high-resolution timers ──
+  // Sub-millisecond timing lets sites fingerprint your CPU and mount timing
+  // attacks. Clamping to 100µs keeps animations smooth but kills the signal.
+  try {
+    const origNow = performance.now.bind(performance);
+    performance.now = () => Math.floor(origNow() * 10) / 10;
+  } catch (_) {}
 })();

@@ -1,6 +1,6 @@
 {
   "name": "grimbrowser",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "GrimBrowser is a privacy based browser for everything you need",
   "main": "main.js",
   "scripts": {
@@ -17,7 +17,7 @@
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
-    "electron": "^43.0.0",
+    "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
     "jimp": "^0.22.12",
     "netlify-cli": "^26.2.0"
@@ -48,7 +48,13 @@
       "target": "nsis",
       "icon": "build/icon.ico",
       "extraResources": [
-        { "from": "tor/win", "to": "tor/win", "filter": ["**/*"] }
+        {
+          "from": "tor/win",
+          "to": "tor/win",
+          "filter": [
+            "**/*"
+          ]
+        }
       ]
     },
     "mac": {
@@ -57,8 +63,20 @@
       ],
       "category": "public.app-category.productivity",
       "extraResources": [
-        { "from": "tor/mac", "to": "tor/mac", "filter": ["**/*"] },
-        { "from": "tor/mac-arm64", "to": "tor/mac-arm64", "filter": ["**/*"] }
+        {
+          "from": "tor/mac",
+          "to": "tor/mac",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "tor/mac-arm64",
+          "to": "tor/mac-arm64",
+          "filter": [
+            "**/*"
+          ]
+        }
       ]
     },
     "linux": {
@@ -66,7 +84,13 @@
         "AppImage"
       ],
       "extraResources": [
-        { "from": "tor/linux", "to": "tor/linux", "filter": ["**/*"] }
+        {
+          "from": "tor/linux",
+          "to": "tor/linux",
+          "filter": [
+            "**/*"
+          ]
+        }
       ],
       "category": "Network"
     }

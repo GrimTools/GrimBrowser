@@ -121,6 +121,22 @@ let shieldBlock3pCookies = true; // block cookies for third-party (cross-site) r
 let shieldBlockAutoplay = true; // block media that tries to autoplay with sound
 const FP_PATH = path.join(__dirname, 'src', 'fp-protect.js');
 
+// Attach (or detach) the fingerprint-protection script to a session.
+// `setPreloads` is deprecated and slated for removal — if it ever disappears,
+// fingerprint protection would silently stop loading with no error, so prefer the
+// modern registerPreloadScript API and only fall back on older Electron.
+function setFpPreload(ses, on) {
+  const FP_ID = 'grim-fp-protect';
+  try {
+    if (typeof ses.registerPreloadScript === 'function') {
+      try { ses.unregisterPreloadScript(FP_ID); } catch (_) { /* wasn't registered */ }
+      if (on) ses.registerPreloadScript({ id: FP_ID, type: 'frame', filePath: FP_PATH });
+      return;
+    }
+  } catch (_) { /* fall through to the legacy API */ }
+  try { ses.setPreloads(on ? [FP_PATH] : []); } catch (_) {}
+}
+
 let mainWindow;
 let tabs = new Map();      // tabId -> BrowserView
 let activeTabId = null;
@@ -155,6 +171,11 @@ const TOOLBAR_HEIGHT = 140; // titlebar 54 + tab strip 36 + toolbar ~50 (url bar
 const STATUSBAR_HEIGHT = 22;
 const PARTITION = 'persist:main';
 
+// Default User-Agent for the whole app (matches the per-request header below).
+// Without this, Electron appends "Electron/x GrimBrowser/x" — an instant giveaway.
+app.userAgentFallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/' + process.versions.chrome.split('.')[0] + '.0.0.0 Safari/537.36';
+
 // Disable WebRTC's local IP leak vector at the Chromium flag level
 app.commandLine.appendSwitch('webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy');
@@ -163,6 +184,13 @@ app.commandLine.appendSwitch('disable-features',
   'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication,CalculateNativeWinOcclusion,' +
   'InterestCohortAPI,BrowsingTopics,Fledge,AttributionReporting,PrivacySandboxAdsAPIs,IdleDetection');
 app.commandLine.appendSwitch('disable-speech-api');       // no speech recognition/synthesis snooping
+// ── Rendering-level fingerprint normalisation (Tor Browser does the same) ──
+// Your monitor's colour profile and font-rendering settings are surprisingly
+// identifying. Forcing everyone onto sRGB + plain font rendering puts all Grim
+// users in one bucket instead of exposing per-machine display characteristics.
+app.commandLine.appendSwitch('force-color-profile', 'srgb');
+app.commandLine.appendSwitch('font-render-hinting', 'none');
+app.commandLine.appendSwitch('disable-lcd-text');         // subpixel AA differs per display
 app.commandLine.appendSwitch('disable-webgl-image-chromium');
 app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-background-networking');
@@ -325,10 +353,17 @@ function createWindow() {
   const ses = session.fromPartition(PARTITION);
 
   // ── Fingerprint protection injected into every page ──
-  ses.setPreloads([FP_PATH]);
+  setFpPreload(ses, true);
 
-  // ── Spoof User-Agent (generic Firefox on Windows — no browser/OS fingerprint) ──
-  const SPOOFED_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0';
+  // ── Spoof User-Agent (plain Chrome on Windows — no browser/OS fingerprint) ──
+  // ── User-Agent ───────────────────────────────────────────────────────────────
+  // Grim runs on Chromium. Claiming to be Firefox made us MORE identifiable, not
+  // less: any site can spot Chromium-only APIs behind a Firefox UA and flag the
+  // mismatch as a rare, trackable combination. So we report a plain Chrome UA
+  // built from the real engine version — blending in with billions of Chrome users
+  // instead of impersonating a browser we aren't.
+  const SPOOFED_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+    'Chrome/' + process.versions.chrome.split('.')[0] + '.0.0.0 Safari/537.36';
   ses.setUserAgent(SPOOFED_UA);
 
   // ── Real ad/tracker blocking via EasyList + EasyPrivacy (Ghostery engine) ──
@@ -450,6 +485,14 @@ function createWindow() {
   ses.setPermissionCheckHandler((wc, permission) => {
     return ALLOWED_PERMISSIONS.includes(permission);
   });
+
+  // ── Hardware access: refuse outright ──
+  // WebUSB/HID/Serial let a page enumerate your physical devices, which is both a
+  // strong fingerprint and an attack surface. A browser never needs this.
+  try {
+    ses.setDevicePermissionHandler(() => false);
+    ses.setUSBProtectedClassesHandler(() => []);
+  } catch (_) { /* older Electron without these APIs */ }
 
   // ── Download safety check ──
   ses.on('will-download', (event, item) => {
@@ -631,8 +674,13 @@ function startTor() {
     // The mac/linux Tor ships its own libssl/libcrypto/libevent next to the binary,
     // so run from that folder and point the dynamic loader at it.
     const torBinDir = path.dirname(TOR_EXE);
+    // ── Per-site circuit isolation ──
+    // Without this, every site shares ONE circuit, so they all see the same exit IP
+    // at the same moment and can be correlated as one person. IsolateDestAddr tells
+    // Tor to build a separate circuit per destination, so each site sees a different
+    // exit IP. (Trade-off: more circuits = slightly slower first connections.)
     torProcess = spawn(TOR_EXE, [
-      '--SocksPort', String(TOR_PORT),
+      '--SocksPort', String(TOR_PORT) + ' IsolateDestAddr IsolateDestPort',
       '--ControlPort', String(TOR_CTRL),
       '--DataDirectory', TOR_DATA,
       '--Log', 'notice stdout'
@@ -776,7 +824,7 @@ ipcMain.handle('set-shield', (e, key, on) => {
   }
   if (key === 'https') { shieldHttpsOnly = on; return { applied: true }; }
   if (key === 'dnt')   { shieldDNT = on; return { applied: true }; }
-  if (key === 'fp')    { shieldFP = on; ses.setPreloads(on ? [FP_PATH] : []); return { applied: true, reload: true }; }
+  if (key === 'fp')    { shieldFP = on; setFpPreload(ses, on); return { applied: true, reload: true }; }
   if (key === 'js')    { disableJS = on; return { applied: true, newTabsOnly: true }; }
   if (key === 'params')  { shieldStripParams = on; return { applied: true }; }
   if (key === 'amp')     { shieldUnwrapAmp = on; return { applied: true }; }
@@ -887,7 +935,8 @@ ipcMain.handle('grim-search', async (e, query) => {
 });
 
 // ── Grim Search: Images & Videos (DuckDuckGo, needs a vqd token) ──
-const GRIM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0';
+const GRIM_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/' + process.versions.chrome.split('.')[0] + '.0.0.0 Safari/537.36';
 async function getVqd(query) {
   const r = await searchFetch('https://duckduckgo.com/?q=' + encodeURIComponent(query), { headers: { 'User-Agent': GRIM_UA } });
   const h = await r.text();
