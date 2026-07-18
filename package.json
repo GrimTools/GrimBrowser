@@ -1,6 +1,6 @@
 {
   "name": "grimbrowser",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "GrimBrowser is a privacy based browser for everything you need",
   "main": "main.js",
   "scripts": {
@@ -44,28 +44,29 @@
       "!scripts/**",
       "!.github/**"
     ],
-    "extraResources": [
-      {
-        "from": "tor",
-        "to": "tor",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "extraResources": [
+        { "from": "tor/win", "to": "tor/win", "filter": ["**/*"] }
+      ]
     },
     "mac": {
       "target": [
         "dmg"
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extraResources": [
+        { "from": "tor/mac", "to": "tor/mac", "filter": ["**/*"] },
+        { "from": "tor/mac-arm64", "to": "tor/mac-arm64", "filter": ["**/*"] }
+      ]
     },
     "linux": {
       "target": [
         "AppImage"
+      ],
+      "extraResources": [
+        { "from": "tor/linux", "to": "tor/linux", "filter": ["**/*"] }
       ],
       "category": "Network"
     }

@@ -117,6 +117,7 @@ let shieldStripParams = true;   // remove utm_/fbclid/etc from links
 let shieldUnwrapAmp = true;     // skip AMP / redirect wrappers
 let shieldStripHeaders = true;  // strip client-hint / X-Client-Data headers
 let shieldBlockPing = true;     // block hyperlink auditing (<a ping>) & beacons
+let shieldBlock3pCookies = true; // block cookies for third-party (cross-site) requests
 let shieldBlockAutoplay = true; // block media that tries to autoplay with sound
 const FP_PATH = path.join(__dirname, 'src', 'fp-protect.js');
 
@@ -133,7 +134,10 @@ let torEnabled = false;
 // folder is shipped as loose files via extraResources → process.resourcesPath/tor.
 const TOR_DIR    = app.isPackaged ? path.join(process.resourcesPath, 'tor') : path.join(__dirname, 'tor');
 // OS-aware Tor binary: tor/win/tor.exe, tor/mac/tor, tor/linux/tor — falls back to tor/tor.exe (legacy Windows).
-const TOR_PLATFORM = process.platform === 'win32' ? 'win' : (process.platform === 'darwin' ? 'mac' : 'linux');
+// Apple Silicon and Intel Macs need different Tor builds, so mac is arch-aware.
+const TOR_PLATFORM = process.platform === 'win32' ? 'win'
+  : process.platform === 'darwin' ? (process.arch === 'arm64' ? 'mac-arm64' : 'mac')
+  : 'linux';
 const TOR_BIN_NAME = process.platform === 'win32' ? 'tor.exe' : 'tor';
 const TOR_EXE = (() => {
   const perOs = path.join(TOR_DIR, TOR_PLATFORM, TOR_BIN_NAME);
@@ -367,6 +371,40 @@ function createWindow() {
     cb({});
   });
 
+  // ── Block third-party (cross-site) cookies ──────────────────────────────────
+  // Electron does NOT block these by default. Without this, ad networks embedded on
+  // many sites read one shared cookie and follow you across the whole web.
+  // We compare the request's site against the tab's top-level site, and if they
+  // differ we strip the outgoing Cookie header and any incoming Set-Cookie.
+  const siteOf = (urlStr) => {
+    try {
+      const h = new URL(urlStr).hostname.replace(/^www\./, '');
+      const parts = h.split('.');
+      // registrable-domain approximation: keep the last two labels (example.com)
+      return parts.length > 2 ? parts.slice(-2).join('.') : h;
+    } catch (_) { return null; }
+  };
+  const isThirdParty = (details) => {
+    try {
+      if (!details.webContentsId) return false;          // no owning tab → leave alone
+      const wc = require('electron').webContents.fromId(details.webContentsId);
+      const top = wc && wc.getURL();
+      if (!top) return false;
+      const a = siteOf(top), b = siteOf(details.url);
+      return !!(a && b && a !== b);
+    } catch (_) { return false; }
+  };
+
+  ses.webRequest.onHeadersReceived((details, cb) => {
+    if (!shieldBlock3pCookies || !isThirdParty(details)) return cb({});
+    const h = details.responseHeaders || {};
+    let stripped = false;
+    for (const k of Object.keys(h)) {
+      if (k.toLowerCase() === 'set-cookie') { delete h[k]; stripped = true; }
+    }
+    return stripped ? cb({ responseHeaders: h }) : cb({});
+  });
+
   // ── Strip identifying headers, send DNT + GPC ──
   ses.webRequest.onBeforeSendHeaders((details, cb) => {
     const lowerUrl = (details.url || '').toLowerCase();
@@ -377,6 +415,8 @@ function createWindow() {
       send('blocked-count', blockedCount);
     }
     const h = details.requestHeaders;
+    // Never send cookies to a third-party site (cross-site tracking)
+    if (shieldBlock3pCookies && isThirdParty(details)) { delete h['Cookie']; delete h['cookie']; }
     if (shieldDNT) { h['DNT'] = '1'; h['Sec-GPC'] = '1'; } // Do Not Track + Global Privacy Control
     else { delete h['DNT']; delete h['Sec-GPC']; }
     h['User-Agent'] = SPOOFED_UA;
@@ -438,10 +478,11 @@ function createWindow() {
     item.once('done', async (ev, state) => {
       const savePath = item.getSavePath();
       send('download-done', { id, state, savePath });
-      // Deep malware scan with Windows Defender (Windows only; Mac/Linux have no Defender)
-      if (process.platform === 'win32' && state === 'completed' && savePath) {
+      // Deep malware scan: Windows Defender on Windows, ClamAV on macOS/Linux
+      // (reports 'no-av' rather than silently skipping when no scanner exists).
+      if (state === 'completed' && savePath) {
         send('download-scan', { id, result: { status: 'scanning' } });
-        const result = await scanFileDefender(savePath);
+        const result = await scanFile(savePath);
         send('download-scan', { id, result });
         if (result.status === 'malicious') {
           const choice = dialog.showMessageBoxSync(mainWindow, {
@@ -587,12 +628,21 @@ function startTor() {
     if (!fs.existsSync(TOR_DATA)) fs.mkdirSync(TOR_DATA, { recursive: true });
     try { if (process.platform !== 'win32') fs.chmodSync(TOR_EXE, 0o755); } catch (_) {} // ensure executable on unix
 
+    // The mac/linux Tor ships its own libssl/libcrypto/libevent next to the binary,
+    // so run from that folder and point the dynamic loader at it.
+    const torBinDir = path.dirname(TOR_EXE);
     torProcess = spawn(TOR_EXE, [
       '--SocksPort', String(TOR_PORT),
       '--ControlPort', String(TOR_CTRL),
       '--DataDirectory', TOR_DATA,
       '--Log', 'notice stdout'
-    ], { cwd: TOR_DIR });
+    ], {
+      cwd: torBinDir,
+      env: Object.assign({}, process.env, {
+        LD_LIBRARY_PATH: torBinDir,     // Linux
+        DYLD_LIBRARY_PATH: torBinDir    // macOS
+      })
+    });
 
     let resolved = false;
     const checkBootstrap = (data) => {
@@ -650,56 +700,55 @@ async function wipeAllData() {
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'grim-settings.json');
 const HISTORY_PATH  = path.join(app.getPath('userData'), 'grim-history.json');
 
-ipcMain.handle('load-settings', () => {
-  try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')); }
-  catch { return {}; }
-});
-ipcMain.handle('save-settings', (e, data) => {
-  try { fs.writeFileSync(SETTINGS_PATH, JSON.stringify(data)); return true; }
-  catch { return false; }
-});
+// ── Encrypted local storage ──────────────────────────────────────────────────
+// History/bookmarks/session reveal everything you browse, so they're written with
+// OS-level encryption (DPAPI on Windows, Keychain on macOS, libsecret on Linux)
+// instead of plain JSON. Old plaintext files are still readable and get
+// transparently re-encrypted the next time they're saved.
+function writeSecureJson(file, data) {
+  try {
+    const json = JSON.stringify(data);
+    const buf = safeStorage.isEncryptionAvailable()
+      ? safeStorage.encryptString(json)
+      : Buffer.from(json, 'utf8');   // no OS keystore available — store as-is
+    fs.writeFileSync(file, buf);
+    return true;
+  } catch { return false; }
+}
+function readSecureJson(file, fallback) {
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    const buf = fs.readFileSync(file);
+    try {
+      if (safeStorage.isEncryptionAvailable()) return JSON.parse(safeStorage.decryptString(buf));
+    } catch (_) { /* not encrypted yet — fall through to legacy plaintext */ }
+    return JSON.parse(buf.toString('utf8'));
+  } catch { return fallback; }
+}
+
+ipcMain.handle('load-settings', () => readSecureJson(SETTINGS_PATH, {}));
+ipcMain.handle('save-settings', (e, data) => writeSecureJson(SETTINGS_PATH, data));
 ipcMain.handle('owner-status', () => {
   return { verified: ownerVerified, name: ownerName, device: os.hostname() + ' · ' + os.userInfo().username };
 });
-ipcMain.handle('load-history', () => {
-  try { return JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8')); }
-  catch { return []; }
-});
-ipcMain.handle('save-history', (e, data) => {
-  try { fs.writeFileSync(HISTORY_PATH, JSON.stringify(data)); return true; }
-  catch { return false; }
-});
+ipcMain.handle('load-history', () => readSecureJson(HISTORY_PATH, []));
+ipcMain.handle('save-history', (e, data) => writeSecureJson(HISTORY_PATH, data));
 
 const BOOKMARKS_PATH = path.join(app.getPath('userData'), 'grim-bookmarks.json');
-ipcMain.handle('load-bookmarks', () => {
-  try { return JSON.parse(fs.readFileSync(BOOKMARKS_PATH, 'utf8')); } catch { return []; }
-});
-ipcMain.handle('save-bookmarks', (e, data) => {
-  try { fs.writeFileSync(BOOKMARKS_PATH, JSON.stringify(data)); return true; } catch { return false; }
-});
+ipcMain.handle('load-bookmarks', () => readSecureJson(BOOKMARKS_PATH, []));
+ipcMain.handle('save-bookmarks', (e, data) => writeSecureJson(BOOKMARKS_PATH, data));
 
 const SHORTCUTS_PATH = path.join(app.getPath('userData'), 'grim-shortcuts.json');
-ipcMain.handle('load-shortcuts', () => {
-  try { return JSON.parse(fs.readFileSync(SHORTCUTS_PATH, 'utf8')); } catch { return null; }
-});
-ipcMain.handle('save-shortcuts', (e, data) => {
-  try { fs.writeFileSync(SHORTCUTS_PATH, JSON.stringify(data)); return true; } catch { return false; }
-});
+ipcMain.handle('load-shortcuts', () => readSecureJson(SHORTCUTS_PATH, null));
+ipcMain.handle('save-shortcuts', (e, data) => writeSecureJson(SHORTCUTS_PATH, data));
 
 const SESSION_PATH = path.join(app.getPath('userData'), 'grim-session.json');
-ipcMain.handle('load-session', () => {
-  try { return JSON.parse(fs.readFileSync(SESSION_PATH, 'utf8')); } catch { return null; }
-});
-ipcMain.handle('save-session', (e, data) => {
-  try {
-    fs.writeFileSync(SESSION_PATH, JSON.stringify({
-      savedAt: Date.now(),
-      tabs: Array.isArray(data?.tabs) ? data.tabs.slice(0, 30) : [],
-      activeIndex: Number.isInteger(data?.activeIndex) ? data.activeIndex : 0
-    }));
-    return true;
-  } catch { return false; }
-});
+ipcMain.handle('load-session', () => readSecureJson(SESSION_PATH, null));
+ipcMain.handle('save-session', (e, data) => writeSecureJson(SESSION_PATH, {
+  savedAt: Date.now(),
+  tabs: Array.isArray(data?.tabs) ? data.tabs.slice(0, 30) : [],
+  activeIndex: Number.isInteger(data?.activeIndex) ? data.activeIndex : 0
+}));
 
 ipcMain.handle('blocked-log', () => blockedLog.slice(0, 120));
 ipcMain.handle('download-scan', (e, filename, url) => scanDownload(filename || '', url || ''));
@@ -733,6 +782,7 @@ ipcMain.handle('set-shield', (e, key, on) => {
   if (key === 'amp')     { shieldUnwrapAmp = on; return { applied: true }; }
   if (key === 'headers') { shieldStripHeaders = on; return { applied: true }; }
   if (key === 'ping')     { shieldBlockPing = on; return { applied: true }; }
+  if (key === 'cookies3p'){ shieldBlock3pCookies = on; return { applied: true }; }
   if (key === 'autoplay') { shieldBlockAutoplay = on; return { applied: true, newTabsOnly: true }; }
   return { applied: false };
 });
@@ -908,6 +958,40 @@ function scanFileDefender(filePath) {
   });
 }
 
+// ── Malware scan for macOS / Linux via ClamAV (if the user has it installed) ──
+// Windows has Defender built in; Unix has no default scanner, so we use clamscan
+// when present. macOS also quarantines downloads with XProtect at the OS level.
+function findClamscan() {
+  const candidates = [
+    '/usr/bin/clamscan', '/usr/local/bin/clamscan',
+    '/opt/homebrew/bin/clamscan', '/usr/local/sbin/clamscan'
+  ];
+  return candidates.find(p => { try { return fs.existsSync(p); } catch (_) { return false; } }) || null;
+}
+function scanFileClamAV(filePath) {
+  return new Promise(resolve => {
+    const exe = findClamscan();
+    if (!exe) return resolve({ status: 'no-av' });
+    let done = false;
+    const finish = (r) => { if (!done) { done = true; resolve(r); } };
+    const proc = spawn(exe, ['--no-summary', '--stdout', filePath]);
+    proc.on('error', () => finish({ status: 'error' }));
+    proc.on('exit', code => {
+      // clamscan: 0 = clean, 1 = virus found, 2 = error
+      if (code === 1) finish({ status: 'malicious', engine: 'ClamAV' });
+      else if (code === 0) finish({ status: 'clean', engine: 'ClamAV' });
+      else finish({ status: 'unknown', engine: 'ClamAV' });
+    });
+    setTimeout(() => { try { proc.kill(); } catch (_) {} finish({ status: 'timeout' }); }, 90000);
+  });
+}
+
+// Pick whatever scanner this OS actually has.
+function scanFile(filePath) {
+  if (process.platform === 'win32') return scanFileDefender(filePath);
+  return scanFileClamAV(filePath);
+}
+
 // ---- AI providers (all OpenAI-compatible chat endpoints) ----
 // DeepSeek is free via Hugging Face; OpenAI & Gemini are bring-your-own paid keys.
 const PROVIDERS = {
@@ -944,7 +1028,25 @@ ipcMain.handle('ai-config-set', (e, provider, model) => {
   else aiModelKey = Object.keys(PROVIDERS[aiProvider].models)[0];
   return { ok: true, provider: aiProvider, model: aiModelKey };
 });
-function aiRequest(host, apiPath, token, payload) {
+async function aiRequest(host, apiPath, token, payload) {
+  // ── Leak fix ──
+  // A raw https request ignores the session proxy, so with Tor ON the AI provider
+  // would still see your REAL IP. When Tor is enabled, send AI traffic through the
+  // same Tor-routed session the browser uses so the provider only sees an exit node.
+  if (torEnabled) {
+    try {
+      const res = await session.fromPartition(PARTITION).fetch('https://' + host + apiPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60000)   // Tor is slower — allow more time
+      });
+      return { status: res.status, text: await res.text() };
+    } catch (err) {
+      return { status: 0, text: 'Request over Tor failed: ' + (err.message || 'unknown') };
+    }
+  }
+
   const https = require('https');
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);

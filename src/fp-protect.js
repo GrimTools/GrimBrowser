@@ -10,26 +10,87 @@
     try { Object.defineProperty(obj, prop, { get: getter, configurable: true }); } catch (_) {}
   };
 
-  // ── Canvas noise ──
+  // ── Canvas noise (non-destructive) ──
+  // Every read of a canvas returns very slightly different pixels, so the classic
+  // "draw hidden text → hash the pixels" fingerprint never produces a stable ID.
+  // The real canvas is never modified, so pages still LOOK correct.
   try {
-    const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-    const jitter = () => Math.floor(Math.random() * 3) - 1;
     const clamp = v => Math.max(0, Math.min(255, v));
-    function noisify(ctx, w, h) {
-      if (!w || !h) return;
-      const img = origGetImageData.call(ctx, 0, 0, w, h);
-      for (let i = 0; i < img.data.length; i += 4) {
-        img.data[i]     = clamp(img.data[i]     + jitter());
-        img.data[i + 1] = clamp(img.data[i + 1] + jitter());
-        img.data[i + 2] = clamp(img.data[i + 2] + jitter());
+    const jitter = () => Math.floor(Math.random() * 3) - 1;
+
+    // 1. getImageData — noise the copy we hand back, leave the canvas untouched
+    const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function (x, y, w, h) {
+      const img = origGetImageData.call(this, x, y, w, h);
+      try {
+        const d = img.data;
+        // Stride on large canvases: altering a subset still breaks the hash,
+        // but keeps games / photo editors fast instead of touching every pixel.
+        const step = d.length > 400000 ? 40 : 4;
+        for (let i = 0; i < d.length; i += step) {
+          d[i] = clamp(d[i] + jitter());
+          d[i + 1] = clamp(d[i + 1] + jitter());
+          d[i + 2] = clamp(d[i + 2] + jitter());
+        }
+      } catch (_) {}
+      return img;
+    };
+
+    // 2. toDataURL / toBlob — encode from a noised COPY so the original canvas stays clean
+    const noisedCopy = (canvas) => {
+      const c = document.createElement('canvas');
+      c.width = canvas.width; c.height = canvas.height;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+      if (canvas.width && canvas.height) {
+        const img = origGetImageData.call(ctx, 0, 0, canvas.width, canvas.height);
+        const d = img.data;
+        for (let i = 0; i < d.length; i += 4) {
+          d[i] = clamp(d[i] + jitter());
+          d[i + 1] = clamp(d[i + 1] + jitter());
+          d[i + 2] = clamp(d[i + 2] + jitter());
+        }
+        ctx.putImageData(img, 0, 0);
       }
-      ctx.putImageData(img, 0, 0);
-    }
+      return c;
+    };
+
     const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
     HTMLCanvasElement.prototype.toDataURL = function (t, q) {
-      try { const c = this.getContext('2d'); if (c) noisify(c, this.width, this.height); } catch (_) {}
+      try { return origToDataURL.call(noisedCopy(this), t, q); } catch (_) {}
       return origToDataURL.call(this, t, q);
     };
+
+    const origToBlob = HTMLCanvasElement.prototype.toBlob;
+    if (origToBlob) {
+      HTMLCanvasElement.prototype.toBlob = function (cb, t, q) {
+        try { return origToBlob.call(noisedCopy(this), cb, t, q); } catch (_) {}
+        return origToBlob.call(this, cb, t, q);
+      };
+    }
+  } catch (_) {}
+
+  // ── AudioContext fingerprint noise ──
+  // Sites render silent audio and hash the output — your sound stack produces a
+  // unique signature. Tiny per-read noise makes that signature useless.
+  try {
+    const tiny = () => (Math.random() - 0.5) * 1e-7;
+
+    if (window.AudioBuffer) {
+      const origGetChannelData = AudioBuffer.prototype.getChannelData;
+      AudioBuffer.prototype.getChannelData = function (ch) {
+        const data = origGetChannelData.call(this, ch);
+        try { for (let i = 0; i < data.length; i += 100) data[i] += tiny(); } catch (_) {}
+        return data;
+      };
+    }
+    if (window.AnalyserNode) {
+      const origFreq = AnalyserNode.prototype.getFloatFrequencyData;
+      AnalyserNode.prototype.getFloatFrequencyData = function (arr) {
+        origFreq.call(this, arr);
+        try { for (let i = 0; i < arr.length; i++) arr[i] += tiny(); } catch (_) {}
+      };
+    }
   } catch (_) {}
 
   // ── WebGL vendor/renderer mask ──
