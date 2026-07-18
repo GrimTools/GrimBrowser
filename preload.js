@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('grim', {
   forward: ()    => ipcRenderer.send('nav-forward'),
   refresh: ()    => ipcRenderer.send('nav-refresh'),
   stop:    ()    => ipcRenderer.send('nav-stop'),
+  zoom:    (dir) => ipcRenderer.invoke('zoom-set', dir),
+  readerMode: () => ipcRenderer.invoke('reader-mode'),
   hide:    ()    => ipcRenderer.send('nav-hide'),
   show:    ()    => ipcRenderer.send('nav-show'),
 
@@ -40,6 +42,7 @@ contextBridge.exposeInMainWorld('grim', {
   // Tor
   torToggle: (enabled) => ipcRenderer.invoke('tor-toggle', enabled),
   torStatus: ()         => ipcRenderer.invoke('tor-status'),
+  torNewIdentity: ()    => ipcRenderer.invoke('tor-new-identity'),
 
   // File-based persistence
   loadSettings: ()       => ipcRenderer.invoke('load-settings'),

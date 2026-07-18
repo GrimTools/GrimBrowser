@@ -1574,6 +1574,8 @@ body.mode-futuristic #home-search-wrap { animation:borderHue 5s linear infinite;
               <div class="s-section-label" style="margin-bottom:0">Visited pages</div>
               <button id="clear-history" style="background:rgba(224,92,92,0.15);border:1px solid rgba(224,92,92,0.3);border-radius:6px;color:#e05c5c;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer;font-family:inherit;transition:all 0.15s">Clear all</button>
             </div>
+            <input id="history-search" type="text" placeholder="Search history…" spellcheck="false"
+              style="width:100%;box-sizing:border-box;background:var(--surface2,rgba(255,255,255,0.05));border:1px solid rgba(255,255,255,0.14);border-radius:8px;color:var(--fg);font-size:13px;font-family:inherit;padding:9px 12px;margin-bottom:10px;outline:none">
             <div class="s-card" id="history-list" style="max-height:420px;overflow-y:auto">
               <div id="history-empty" style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No history yet</div>
             </div>
@@ -1695,12 +1697,19 @@ body.mode-futuristic #home-search-wrap { animation:borderHue 5s linear infinite;
               <div class="s-row">
                 <div class="s-info">
                   <span class="s-label">Route Through Tor</span>
-                  <span class="s-desc">Masks your IP by routing traffic through the Tor network. Requires tor.exe in /tor folder. Takes 10-20s to connect.</span>
+                  <span class="s-desc">Masks your IP by routing traffic through the Tor network, with a separate circuit per site. Takes 10–20s to connect.</span>
                 </div>
                 <div class="toggle" id="toggle-tor"></div>
               </div>
               <div class="s-row" id="tor-status-row" style="display:none">
                 <span id="tor-status-text" style="font-size:12px;color:var(--muted)"></span>
+              </div>
+              <div class="s-row">
+                <div class="s-info">
+                  <span class="s-label">New Identity</span>
+                  <span class="s-desc">Gets fresh Tor circuits and clears cookies, cache and site data — a new exit IP is pointless if a site still holds the cookie that names you.</span>
+                </div>
+                <button id="tor-new-id" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.22);border-radius:6px;color:var(--fg);font-size:12px;font-weight:600;padding:6px 14px;cursor:pointer;font-family:inherit;white-space:nowrap">New Identity</button>
               </div>
             </div>
           </div>
@@ -1852,7 +1861,14 @@ async function renderHistory(h) {
   const list  = document.getElementById('history-list');
   const empty = document.getElementById('history-empty');
   list.querySelectorAll('.h-row').forEach(el => el.remove());
-  if (!h.length) { empty.style.display = 'block'; return; }
+  // filter by the search box (title or URL)
+  const q = (document.getElementById('history-search')?.value || '').trim().toLowerCase();
+  if (q) h = h.filter(i => (i.title || '').toLowerCase().includes(q) || (i.url || '').toLowerCase().includes(q));
+  if (!h.length) {
+    empty.style.display = 'block';
+    empty.textContent = q ? 'No pages match “' + q + '”' : 'No history yet';
+    return;
+  }
   empty.style.display = 'none';
   h.forEach((item, idx) => {
     const row = document.createElement('div');
@@ -2588,6 +2604,10 @@ function baseCommands(){
     { ico:'★', label:'Bookmark this page', tag:'Action', run:()=>document.getElementById('btn-star')?.click() },
     { ico:'⬇', label:'Downloads', tag:'Panel', run:()=>document.getElementById('btn-downloads')?.click() },
     { ico:'☾', label:'Toggle light / dark mode', tag:'Action', run:()=>setLightMode(!lightMode, true) },
+    { ico:'▤', label:'Reader mode', tag:'Action', run:()=>doReaderMode() },
+    { ico:'+', label:'Zoom in', tag:'Action', run:()=>doZoom('in') },
+    { ico:'−', label:'Zoom out', tag:'Action', run:()=>doZoom('out') },
+    { ico:'◎', label:'Reset zoom', tag:'Action', run:()=>doZoom('reset') },
     { ico:'⚙', label:'Settings', tag:'Panel', run:()=>showSettings() }
   ];
   (tabList||[]).forEach(t=>{ if(t!==activeTab) c.push({ ico:'▤', label:(t.title||t.url||'Tab'), hint:t.url||'', tag:'Tab', run:()=>setActiveTab(t.id) }); });
@@ -3267,6 +3287,69 @@ toggleTor.addEventListener('click', async () => {
   saveSettings();   // remember the Tor choice so it survives a restart
 });
 
+// ── Reader mode ──
+async function doReaderMode(){
+  const res = await window.grim?.readerMode();
+  if(!res?.ok && res?.error){
+    let el = document.getElementById('zoom-toast');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'zoom-toast';
+      el.style.cssText = 'position:fixed;bottom:44px;left:50%;transform:translateX(-50%);'
+        + 'background:var(--surface2,rgba(20,20,20,.95));color:var(--fg,#fff);border:1px solid rgba(255,255,255,.18);'
+        + 'border-radius:8px;padding:7px 15px;font-size:12px;font-weight:600;z-index:99999;'
+        + 'pointer-events:none;transition:opacity .2s';
+      document.body.appendChild(el);
+    }
+    el.textContent = res.error;
+    el.style.opacity = '1';
+    clearTimeout(zoomToastTimer);
+    zoomToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+  }
+}
+// Ctrl+R is reload, so reader mode uses Ctrl+Shift+R
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey||e.metaKey) && e.shiftKey && (e.key === 'R' || e.key === 'r')) { e.preventDefault(); doReaderMode(); }
+});
+
+// ── History search ──
+document.getElementById('history-search')?.addEventListener('input', () => renderHistory());
+
+// ── Zoom ──
+// Shows the current level briefly, so Ctrl +/- gives visible feedback.
+let zoomToastTimer;
+async function doZoom(dir){
+  const res = await window.grim?.zoom(dir);
+  if(!res) return;
+  let el = document.getElementById('zoom-toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'zoom-toast';
+    el.style.cssText = 'position:fixed;bottom:44px;left:50%;transform:translateX(-50%);'
+      + 'background:var(--surface2,rgba(20,20,20,.95));color:var(--fg,#fff);border:1px solid rgba(255,255,255,.18);'
+      + 'border-radius:8px;padding:7px 15px;font-size:12px;font-weight:600;z-index:99999;'
+      + 'pointer-events:none;transition:opacity .2s';
+    document.body.appendChild(el);
+  }
+  el.textContent = res.percent + '%';
+  el.style.opacity = '1';
+  clearTimeout(zoomToastTimer);
+  zoomToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 1200);
+}
+
+// ── New Tor identity ──
+// Restarting Tor takes ~10-25s to bootstrap again, so the button reports progress.
+const btnNewId = document.getElementById('tor-new-id');
+btnNewId?.addEventListener('click', async () => {
+  btnNewId.disabled = true;
+  btnNewId.textContent = 'Resetting…';
+  const res = await window.grim?.torNewIdentity();
+  btnNewId.disabled = false;
+  btnNewId.textContent = res?.ok ? 'Done — new identity' : 'Failed';
+  setTimeout(() => { btnNewId.textContent = 'New Identity'; }, 2500);
+  if (res?.ok) window.grim?.refresh?.();
+});
+
 // ── Bookmarks ──
 let bookmarks = [];
 const bookmarksBar = document.getElementById('bookmarks-bar');
@@ -3489,6 +3572,10 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey||e.metaKey) && e.key === 't') { e.preventDefault(); createTab(); }
   if ((e.ctrlKey||e.metaKey) && e.key === 'w') { e.preventDefault(); if (activeTab) closeTab(activeTab.id); }
   if ((e.ctrlKey||e.metaKey) && e.key === ',') { e.preventDefault(); showSettings(); }
+  // Zoom: Ctrl +  /  Ctrl -  /  Ctrl 0 to reset
+  if ((e.ctrlKey||e.metaKey) && (e.key === '+' || e.key === '=')) { e.preventDefault(); doZoom('in'); }
+  if ((e.ctrlKey||e.metaKey) && (e.key === '-' || e.key === '_')) { e.preventDefault(); doZoom('out'); }
+  if ((e.ctrlKey||e.metaKey) && e.key === '0') { e.preventDefault(); doZoom('reset'); }
   if (e.altKey && e.key === 'ArrowLeft')        { navBack(); }
   if (e.altKey && e.key === 'ArrowRight')       { navForward(); }
   if (e.key === 'Escape' && settingsEl.classList.contains('open')) { restoreView(); }

@@ -1273,6 +1273,73 @@ ipcMain.on('nav-go',      (e, url) => activeView()?.webContents.loadURL(url));
 ipcMain.on('nav-back',    ()       => { const wc = activeView()?.webContents; if (wc?.navigationHistory?.canGoBack()) wc.navigationHistory.goBack(); else wc?.goBack?.(); });
 ipcMain.on('nav-forward', ()       => { const wc = activeView()?.webContents; if (wc?.navigationHistory?.canGoForward()) wc.navigationHistory.goForward(); else wc?.goForward?.(); });
 ipcMain.on('nav-refresh', ()       => activeView()?.webContents.reload());
+
+// ── Reader mode ──
+// Strips a page down to its article text: no ads, sidebars, popups or layout
+// tricks. Also a mild privacy win, since the clutter is usually what tracks you.
+// Press again (or reload) to get the original page back.
+ipcMain.handle('reader-mode', async () => {
+  const wc = activeView()?.webContents;
+  if (!wc) return { ok: false, error: 'no page open' };
+  try {
+    const result = await wc.executeJavaScript(`(() => {
+      if (window.__grimReader) { location.reload(); return { off: true }; }
+      const pick = document.querySelector('article')
+        || document.querySelector('[role="main"]')
+        || document.querySelector('main')
+        || document.body;
+      if (!pick) return { fail: true };
+      const title = (document.querySelector('h1')||{}).innerText || document.title || '';
+      // keep only headings, paragraphs, lists, quotes, images and code
+      const keep = pick.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,pre,code,img,figcaption');
+      if (keep.length < 3) return { fail: true };
+      let html = '';
+      keep.forEach(el => {
+        if (el.tagName === 'IMG') {
+          if (el.src && el.naturalWidth > 200) html += '<img src="' + el.src + '">';
+          return;
+        }
+        const t = (el.innerText || '').trim();
+        if (!t) return;
+        const tag = el.tagName.toLowerCase();
+        html += '<' + tag + '>' + t.replace(/</g,'&lt;') + '</' + tag + '>';
+      });
+      document.documentElement.innerHTML =
+        '<head><meta charset="utf-8"><title>' + document.title + '</title></head><body>'
+        + '<div id="grim-reader"><h1>' + title.replace(/</g,'&lt;') + '</h1>' + html + '</div></body>';
+      const st = document.createElement('style');
+      st.textContent = 'body{background:#0d0d0d;margin:0}'
+        + '#grim-reader{max-width:720px;margin:0 auto;padding:56px 24px 96px;'
+        + 'color:#e8e8e8;font:17px/1.75 -apple-system,Segoe UI,Roboto,sans-serif}'
+        + '#grim-reader h1{font-size:31px;line-height:1.25;margin:0 0 26px;color:#fff}'
+        + '#grim-reader h2,#grim-reader h3,#grim-reader h4{color:#fff;margin:34px 0 12px;line-height:1.3}'
+        + '#grim-reader p,#grim-reader li{margin:0 0 19px}'
+        + '#grim-reader img{max-width:100%;height:auto;border-radius:8px;margin:20px 0;display:block}'
+        + '#grim-reader blockquote{border-left:3px solid #444;margin:22px 0;padding:2px 0 2px 18px;color:#b4b4b4}'
+        + '#grim-reader pre,#grim-reader code{background:#1a1a1a;border-radius:6px;font-size:14px}'
+        + '#grim-reader pre{padding:14px;overflow-x:auto}#grim-reader code{padding:2px 5px}'
+        + '#grim-reader a{color:#9ecbff}';
+      document.head.appendChild(st);
+      window.__grimReader = true;
+      return { on: true };
+    })()`, true);
+    if (result?.fail) return { ok: false, error: 'no article content found on this page' };
+    return { ok: true, on: !!result?.on };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Zoom (Ctrl +/-/0) ──
+// Chromium's zoom levels are logarithmic: each step is a factor of 1.2.
+ipcMain.handle('zoom-set', (e, dir) => {
+  const wc = activeView()?.webContents;
+  if (!wc) return { level: 0, percent: 100 };
+  let level = wc.getZoomLevel();
+  if (dir === 'in')  level = Math.min(level + 0.5, 5);
+  else if (dir === 'out') level = Math.max(level - 0.5, -5);
+  else level = 0;                       // reset
+  wc.setZoomLevel(level);
+  return { level, percent: Math.round(Math.pow(1.2, level) * 100) };
+});
 ipcMain.on('nav-stop',    ()       => activeView()?.webContents.stop());
 ipcMain.on('nav-hide',    ()       => { viewsHidden = true; const v = activeView(); if (v) mainWindow.removeBrowserView(v); });
 ipcMain.on('nav-show',    ()       => { viewsHidden = false; showActiveView(); });
@@ -1304,6 +1371,28 @@ ipcMain.handle('tor-toggle', async (e, enabled) => {
   }
 });
 ipcMain.handle('tor-status', () => ({ enabled: torEnabled }));
+
+// ── New identity ──
+// Restarts Tor (fresh circuits, so every site sees a new exit IP) and wipes the
+// session at the same time. Clearing cookies/cache matters as much as changing IP:
+// a new exit node is pointless if the site can still read the cookie that names you.
+ipcMain.handle('tor-new-identity', async () => {
+  try {
+    const ses = session.fromPartition(PARTITION);
+    await ses.clearStorageData();
+    await ses.clearCache();
+    await ses.clearHostResolverCache();
+    if (torEnabled) {
+      stopTor();
+      await new Promise(r => setTimeout(r, 600));   // let the port free up
+      await startTor();
+      await ses.setProxy({ proxyRules: `socks5://127.0.0.1:${TOR_PORT}` });
+    }
+    return { ok: true, tor: torEnabled };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 ipcMain.handle('adblock-status', () => ({ ready: adblockReady, blocked: blockedCount }));
 
 app.on('before-quit', () => stopTor());
