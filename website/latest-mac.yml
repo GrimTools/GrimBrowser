@@ -1,0 +1,8 @@
+version: 1.0.3
+files:
+  - url: GrimBrowser-1.0.3-arm64.dmg
+    sha512: X02IBLM1tRH9BGc4lK9xodI9ep3hTjwuK3iyfL6BxxLlViSJA5OPhPapPd/owsbWnOa1fe0zJuarkyPUJ+ag6g==
+    size: 129632931
+path: GrimBrowser-1.0.3-arm64.dmg
+sha512: X02IBLM1tRH9BGc4lK9xodI9ep3hTjwuK3iyfL6BxxLlViSJA5OPhPapPd/owsbWnOa1fe0zJuarkyPUJ+ag6g==
+releaseDate: '2026-07-18T15:42:31.653Z'

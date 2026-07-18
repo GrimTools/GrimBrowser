@@ -33,3 +33,8 @@ Thumbs.db
 grim-deploy.ps1
 Grim Deploy.bat
 .grim-deploy-secret
+
+# Installers — served from the website, far too big for git (GitHub caps at 100MB)
+website/*.dmg
+website/*.AppImage
+website/*.blockmap

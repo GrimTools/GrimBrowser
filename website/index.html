@@ -268,6 +268,8 @@
 <script>
 // ⚙️ Set your download link here (the installer next to this page, or a GitHub Release URL)
 const DOWNLOAD_URL = "GrimBrowser-Setup.exe"; // stable name — never changes between versions
+const MAC_URL      = "GrimBrowser-1.0.3-arm64.dmg";  // Apple Silicon build
+const LINUX_URL    = "GrimBrowser-1.0.3.AppImage";   // runs on any distro
 const INSTALL_CMD  = "curl -fsSL https://grimbrowser.netlify.app/install.sh | bash";
 // top + nav buttons always point at the Windows installer
 ['dl-nav','dl-top'].forEach(id=>{
@@ -285,13 +287,21 @@ function renderPlat(os){
       '<svg class="dl-ico" width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M3 13h10"/></svg>'+
       'Download for Windows</a>'+
       '<div class="win-note">Windows 10/11 · 102 MB · SmartScreen may pop up — click “More info → Run anyway”.</div>';
-  } else if(os==='mac' || os==='linux'){
-    const name = os==='mac' ? 'macOS' : 'Linux (any distro)';
+  } else if(os==='mac'){
     platPanel.innerHTML =
-      '<div class="win-note" style="margin:0 0 4px">'+name+' — one command (needs <b>git</b> + <b>Node.js</b>):</div>'+
-      '<div class="cmd-row"><code id="lx-cmd">'+INSTALL_CMD+'</code><button class="cmd-copy" id="lx-copy">Copy</button></div>'+
-      '<div class="win-note">Then launch it with <b>cd ~/GrimBrowser &amp;&amp; npm start</b>. A native '+name.split(' ')[0]+' installer is coming.</div>';
+      '<a class="btn btn-primary btn-lg dl-btn" href="'+MAC_URL+'" download>'+
+      '<svg class="dl-ico" width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M3 13h10"/></svg>'+
+      'Download for macOS</a>'+
+      '<div class="win-note">Apple Silicon (M1/M2/M3/M4) · 123 MB · Unsigned app — right-click the app → <b>Open</b> the first time.</div>'+
+      '<div class="win-note" style="margin-top:6px;opacity:.75">On an Intel Mac? Use the terminal install below.</div>'+
+      '<div class="cmd-row"><code id="lx-cmd">'+INSTALL_CMD+'</code><button class="cmd-copy" id="lx-copy">Copy</button></div>';
     wireCopy();
+  } else if(os==='linux'){
+    platPanel.innerHTML =
+      '<a class="btn btn-primary btn-lg dl-btn" href="'+LINUX_URL+'" download>'+
+      '<svg class="dl-ico" width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M3 13h10"/></svg>'+
+      'Download for Linux</a>'+
+      '<div class="win-note">Any distro · 128 MB · AppImage — make it executable (<b>chmod +x</b>) then double-click.</div>';
   } else {
     const label = os==='android' ? 'Android' : 'iPhone';
     platPanel.innerHTML = '<div class="plat-soon-msg"><b>Grim for '+label+' is coming.</b><br>Grim is a desktop app today — a mobile version is a whole separate build we\'re working on. Want it? Star the repo and it\'ll land there first. 🖤</div>';

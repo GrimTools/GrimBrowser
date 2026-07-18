@@ -1,0 +1,9 @@
+version: 1.0.3
+files:
+  - url: GrimBrowser-1.0.3.AppImage
+    sha512: TkhPb3/FKkVtOJQAtWwev9LDGrdrN5FhvYEY7hHxMJD7mXLG8H9iRvy6TqMe25PoTMr9S938K51Wcu0B6Ghn3w==
+    size: 134461381
+    blockMapSize: 141273
+path: GrimBrowser-1.0.3.AppImage
+sha512: TkhPb3/FKkVtOJQAtWwev9LDGrdrN5FhvYEY7hHxMJD7mXLG8H9iRvy6TqMe25PoTMr9S938K51Wcu0B6Ghn3w==
+releaseDate: '2026-07-18T15:42:16.690Z'
