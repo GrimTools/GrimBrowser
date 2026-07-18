@@ -1298,12 +1298,12 @@ body.mode-futuristic #home-search-wrap { animation:borderHue 5s linear infinite;
                 <div class="toggle on" data-shield="adblock"></div>
               </div>
               <div class="s-row">
-                <div class="s-info"><span class="s-label">Block Fingerprinting &amp; DRM</span><span class="s-desc">Spoofs canvas, WebGL, hardware, user-agent &amp; blocks DRM/EME (reloads page)</span></div>
+                <div class="s-info"><span class="s-label">Block Fingerprinting &amp; DRM</span><span class="s-desc">Noises canvas, WebGL, audio &amp; fonts; reports UTC, a rounded screen size and blunted timers; blocks DRM/EME (reloads page)</span></div>
                 <div class="toggle on" data-shield="fp"></div>
               </div>
               <div class="s-row">
-                <div class="s-info"><span class="s-label">Block Cross-site Cookies</span><span class="s-desc">Chromium partitions cookies per site — built in</span></div>
-                <span class="locked-badge">Always on</span>
+                <div class="s-info"><span class="s-label">Block Third-party Cookies</span><span class="s-desc">Stops ad networks reading one cookie across sites. May break “Sign in with Google/Facebook”</span></div>
+                <div class="toggle on" data-shield="cookies3p"></div>
               </div>
             </div>
           </div>
@@ -1721,8 +1721,8 @@ body.mode-futuristic #home-search-wrap { animation:borderHue 5s linear infinite;
                 <div class="toggle" data-shield="js"></div>
               </div>
               <div class="s-row">
-                <div class="s-info"><span class="s-label">Block Third-party Cookies</span><span class="s-desc">Chromium blocks these by default — built in</span></div>
-                <span class="locked-badge">Always on</span>
+                <div class="s-info"><span class="s-label">Block Third-party Cookies</span><span class="s-desc">Strips cookies on cross-site requests — controlled in Shields</span></div>
+                <div class="toggle on" data-shield="cookies3p"></div>
               </div>
               <div class="s-row">
                 <div class="s-info"><span class="s-label">Block FLoC / Topics API</span><span class="s-desc">Disables Google's ad-topics profiling of your browsing</span></div>
@@ -1803,6 +1803,7 @@ async function saveSettings() {
     shields: shieldState,
     lightMode, accentColor, layout: layoutState,
     clearOnExit: toggleClearExit?.classList.contains('on') || false,
+    tor: document.getElementById('toggle-tor')?.classList.contains('on') || false,
     petals: petalsEnabled, cloak: tabCloak, antiClose: antiCloseEnabled, lite: liteMode,
   };
   await window.grim?.saveSettings(data);
@@ -2557,7 +2558,7 @@ async function askAboutPage(){
   openAiChat();
   pageContext = { title: (info.title || info.url), url: info.url, text: info.text.slice(0, 12000) };
   const welcome = aiMessages.querySelector('.ai-welcome'); if(welcome) welcome.remove();
-  addAiMsg('user', '📄 Summarize this page'); aiHistory.push({ role:'user', content:'Summarize this page' });
+  addAiMsg('user', 'Summarize this page'); aiHistory.push({ role:'user', content:'Summarize this page' });
   const typing = addAiMsg('ai','');
   typing.innerHTML='<span class="ai-dots"><span></span><span></span><span></span></span>';
   const apiMessages = [
@@ -2913,6 +2914,25 @@ async function applySaved() {
     toggleClearExit.classList.add('on');
     window.grim?.setClearOnExit(true);
   }
+  // Reconnect Tor automatically if it was on when Grim last closed, so it doesn't
+  // have to be switched on by hand every launch. Bootstrapping takes ~10-25s, so
+  // the status line reports progress instead of appearing stuck.
+  if (s.tor) {
+    const tt = document.getElementById('toggle-tor');
+    const row = document.getElementById('tor-status-row');
+    const txt = document.getElementById('tor-status-text');
+    const dot = (c) => '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:'+c+';margin-right:7px;vertical-align:middle"></span>';
+    if (tt) tt.classList.add('on');
+    if (row) row.style.display = 'flex';
+    if (txt) txt.innerHTML = dot('var(--muted)') + 'Reconnecting to Tor…';
+    const res = await window.grim?.torToggle(true);
+    if (txt) {
+      txt.innerHTML = res?.ok && res.enabled
+        ? dot('var(--success)') + 'Connected — all traffic routed through Tor (DNS included)'
+        : dot('var(--danger)') + (res?.error || 'Could not reconnect to Tor');
+    }
+    if (!(res?.ok && res.enabled) && tt) tt.classList.remove('on');
+  }
   refreshHfKeyStatus();
   renderHistory();
 }
@@ -3232,15 +3252,19 @@ toggleTor.addEventListener('click', async () => {
   toggleTor.style.pointerEvents = '';
   if (result?.ok) {
     toggleTor.classList.toggle('on', result.enabled);
-    torStatusText.textContent = result.enabled
-      ? '🟢 Connected — all traffic routed through Tor (DNS included)'
-      : '⚫ Disconnected — using direct connection';
+    // status dot rendered as CSS, not an emoji, so it matches the mono theme
+    const dot = (c) => '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:'+c+';margin-right:7px;vertical-align:middle"></span>';
+    torStatusText.innerHTML = result.enabled
+      ? dot('var(--success)') + 'Connected — all traffic routed through Tor (DNS included)'
+      : dot('var(--muted)') + 'Disconnected — using direct connection';
     torStatusText.style.color = result.enabled ? 'var(--success)' : 'var(--muted)';
   } else {
     toggleTor.classList.remove('on');
-    torStatusText.textContent = '🔴 ' + (result?.error || 'Failed — check /tor/tor.exe and all DLL files exist');
+    torStatusText.innerHTML = '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);margin-right:7px;vertical-align:middle"></span>'
+      + (result?.error || 'Failed — check the tor binary exists in the tor/ folder');
     torStatusText.style.color = 'var(--danger)';
   }
+  saveSettings();   // remember the Tor choice so it survives a restart
 });
 
 // ── Bookmarks ──
