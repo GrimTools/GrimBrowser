@@ -28,3 +28,7 @@ Thumbs.db
 
 # Local Netlify folder
 .netlify
+
+# Personal deploy tool — local only, never publish
+grim-deploy.ps1
+Grim Deploy.bat
