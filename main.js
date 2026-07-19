@@ -180,9 +180,13 @@ app.userAgentFallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5
 app.commandLine.appendSwitch('webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy');
 // Harden: no crash reporting, no background networking, no domain reliability pings
+// One combined list — privacy features first, then memory-saving ones. This MUST
+// stay a single call: a second appendSwitch('disable-features', …) would replace
+// this value rather than add to it.
 app.commandLine.appendSwitch('disable-features',
   'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication,CalculateNativeWinOcclusion,' +
-  'InterestCohortAPI,BrowsingTopics,Fledge,AttributionReporting,PrivacySandboxAdsAPIs,IdleDetection');
+  'InterestCohortAPI,BrowsingTopics,Fledge,AttributionReporting,PrivacySandboxAdsAPIs,IdleDetection,' +
+  'BackForwardCache,PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies');
 app.commandLine.appendSwitch('disable-speech-api');       // no speech recognition/synthesis snooping
 // ── Rendering-level fingerprint normalisation (Tor Browser does the same) ──
 // Your monitor's colour profile and font-rendering settings are surprisingly
@@ -201,6 +205,16 @@ app.commandLine.appendSwitch('process-per-site');            // same-site tabs s
 app.commandLine.appendSwitch('renderer-process-limit', '4'); // cap total renderer processes
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512'); // cap V8 heap per renderer
 app.commandLine.appendSwitch('disk-cache-size', '52428800'); // limit disk cache to ~50 MB
+// Chromium's own low-memory profile: smaller caches, fewer background processes,
+// more aggressive resource reclamation. Meant for cheap phones, and it makes a
+// big difference on desktop too.
+app.commandLine.appendSwitch('enable-low-end-device-mode');
+app.commandLine.appendSwitch('enable-aggressive-domstorage-flushing'); // don't hold storage in RAM
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');         // no shader cache growth
+app.commandLine.appendSwitch('media-cache-size', '16777216');          // 16MB media cache (default is huge)
+// NOTE: memory-related features are merged into the single disable-features switch
+// above — calling appendSwitch('disable-features', …) twice REPLACES the first
+// value, which would silently re-enable Google's ad-tracking APIs.
 
 const BLOCKED = [
   // Ad/tracking networks
@@ -623,7 +637,57 @@ function showActiveView() {
   updateViewBounds();
 }
 
+// ── Sleeping tabs ────────────────────────────────────────────────────────────
+// Each open tab is a full renderer process holding tens of MB. Tabs you haven't
+// looked at in a while get unloaded and remembered as just a URL; switching back
+// reloads them. This is the single biggest thing we can do for memory use.
+const sleptTabs    = new Map();  // id -> { url, title }
+const tabLastUsed  = new Map();  // id -> timestamp
+const SLEEP_AFTER  = 10 * 60 * 1000;   // 10 minutes idle
+
+function sleepTab(id) {
+  const view = tabs.get(id);
+  if (!view || id === activeTabId) return false;
+  let url = '';
+  try { url = view.webContents.getURL(); } catch (_) { return false; }
+  // nothing worth restoring for blank/home tabs — leave them alone
+  if (!url || !/^https?:/i.test(url)) return false;
+  let title = '';
+  try { title = view.webContents.getTitle(); } catch (_) {}
+  sleptTabs.set(id, { url, title });
+  try {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.getBrowserView() === view) {
+      mainWindow.removeBrowserView(view);
+    }
+    view.webContents.destroy();
+  } catch (_) {}
+  tabs.delete(id);
+  tabLastUsed.delete(id);
+  return true;
+}
+
+function wakeTab(id) {
+  const info = sleptTabs.get(id);
+  if (!info) return false;
+  sleptTabs.delete(id);
+  const view = createTab(id);
+  try { view.webContents.loadURL(info.url); } catch (_) {}
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const id of Array.from(tabs.keys())) {
+    if (id === activeTabId) { tabLastUsed.set(id, now); continue; }
+    const last = tabLastUsed.get(id);
+    if (last == null) { tabLastUsed.set(id, now); continue; }
+    if (now - last > SLEEP_AFTER) sleepTab(id);
+  }
+}, 60 * 1000);
+
 function closeTab(id) {
+  sleptTabs.delete(id);      // a sleeping tab can be closed too
+  tabLastUsed.delete(id);
   const view = tabs.get(id);
   if (!view) return;
   if (mainWindow.getBrowserView() === view) mainWindow.removeBrowserView(view);
@@ -1348,11 +1412,15 @@ ipcMain.on('nav-show',    ()       => { viewsHidden = false; showActiveView(); }
 ipcMain.on('tab-new', (e, id) => {
   createTab(id);
   activeTabId = id;
+  tabLastUsed.set(id, Date.now());
   // New tab shows the home overlay, so keep the (blank) view hidden for now
 });
 ipcMain.on('tab-switch', (e, id) => {
+  // a slept tab still exists in the UI — reload it on demand
+  if (!tabs.has(id) && sleptTabs.has(id)) wakeTab(id);
   if (!tabs.has(id)) return;
   activeTabId = id;
+  tabLastUsed.set(id, Date.now());
   if (!viewsHidden) showActiveView();
 });
 ipcMain.on('tab-close', (e, id) => closeTab(id));

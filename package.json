@@ -1,6 +1,6 @@
 {
   "name": "grimbrowser",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "GrimBrowser is a privacy based browser for everything you need",
   "main": "main.js",
   "scripts": {

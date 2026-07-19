@@ -1,8 +1,8 @@
-version: 1.0.9
+version: 1.0.10
 files:
   - url: GrimBrowser-Setup.exe
-    sha512: 67t+AlB+vCRQTV1/XXuccj582RruYWi10Q8Ypb7N+wMqV380j+QxqqYKVZ84LJcb0M8HxmlkMXYdikBrOOqimQ==
-    size: 103285010
+    sha512: aOPJaUTOre2ZRiM9MEhMKmCHVG15KLrsJgWGrWKeQ8jRz2y8bItPwqeryKOacqkCwJAgF972y856rGagZqX/Mw==
+    size: 103287553
 path: GrimBrowser-Setup.exe
-sha512: 67t+AlB+vCRQTV1/XXuccj582RruYWi10Q8Ypb7N+wMqV380j+QxqqYKVZ84LJcb0M8HxmlkMXYdikBrOOqimQ==
-releaseDate: '2026-07-18T21:57:06.433Z'
+sha512: aOPJaUTOre2ZRiM9MEhMKmCHVG15KLrsJgWGrWKeQ8jRz2y8bItPwqeryKOacqkCwJAgF972y856rGagZqX/Mw==
+releaseDate: '2026-07-18T23:44:48.876Z'
