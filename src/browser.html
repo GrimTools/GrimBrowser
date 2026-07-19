@@ -1270,6 +1270,9 @@ body.mode-futuristic #home-search-wrap { animation:borderHue 5s linear infinite;
         <button class="s-nav-btn" data-page="network">
           <span class="s-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c1.8 2 1.8 11 0 13M8 1.5c-1.8 2-1.8 11 0 13"/></svg></span> Network
         </button>
+        <button class="s-nav-btn" data-page="report">
+          <span class="s-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13.5V9M6 13.5V4.5M10 13.5V7M14 13.5V2.5"/></svg></span> Report
+        </button>
         <button class="s-nav-btn" data-page="history">
           <span class="s-nav-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 1.5"/></svg></span> History
         </button>
@@ -1564,6 +1567,43 @@ body.mode-futuristic #home-search-wrap { animation:borderHue 5s linear infinite;
                 <span class="locked-badge">Always on</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="s-page" id="page-report">
+          <div class="s-title">Privacy Report</div>
+
+          <!-- headline numbers -->
+          <div class="s-section">
+            <div class="s-section-label">Since you started using Grim</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+              <div class="s-card" style="padding:16px;text-align:center">
+                <div id="rep-blocked" style="font-size:26px;font-weight:700;line-height:1.1">0</div>
+                <div class="s-desc" style="margin-top:5px">Trackers &amp; ads blocked</div>
+              </div>
+              <div class="s-card" style="padding:16px;text-align:center">
+                <div id="rep-domains" style="font-size:26px;font-weight:700;line-height:1.1">0</div>
+                <div class="s-desc" style="margin-top:5px">Distinct trackers seen</div>
+              </div>
+              <div class="s-card" style="padding:16px;text-align:center">
+                <div id="rep-shields" style="font-size:26px;font-weight:700;line-height:1.1">0</div>
+                <div class="s-desc" style="margin-top:5px">Protections active</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- worst offenders -->
+          <div class="s-section">
+            <div class="s-section-label">Most persistent trackers</div>
+            <div class="s-card" id="rep-top" style="max-height:300px;overflow-y:auto">
+              <div class="s-row"><span class="s-desc">Nothing blocked yet — browse a little and come back.</span></div>
+            </div>
+          </div>
+
+          <!-- what's guarding you -->
+          <div class="s-section">
+            <div class="s-section-label">What's protecting you right now</div>
+            <div class="s-card" id="rep-protections"></div>
           </div>
         </div>
 
@@ -3131,6 +3171,7 @@ document.querySelectorAll('.s-nav-btn[data-page]').forEach(btn => {
     document.querySelectorAll('.s-row').forEach(r => r.classList.remove('hidden-search'));
     document.querySelectorAll('.s-section').forEach(s => s.style.display = '');
     if (btn.dataset.page === 'history') renderHistory();
+    if (btn.dataset.page === 'report')  renderReport();
   });
 });
 
@@ -3286,6 +3327,79 @@ toggleTor.addEventListener('click', async () => {
   }
   saveSettings();   // remember the Tor choice so it survives a restart
 });
+
+// ── Privacy report ──
+// Grim's protections are invisible by design, so this page turns the raw block
+// log into something you can actually see: what was blocked, who kept trying,
+// and which defences are switched on right now.
+const PROTECTION_LABELS = {
+  adblock:   ['Ad &amp; tracker blocking', 'EasyList + EasyPrivacy'],
+  fp:        ['Fingerprint protection', 'Canvas, WebGL, audio, fonts, timezone'],
+  cookies3p: ['Third-party cookies blocked', 'Stops cross-site tracking'],
+  https:     ['HTTPS-only', 'Upgrades insecure connections'],
+  headers:   ['Identity headers stripped', 'Hides browser &amp; OS details'],
+  params:    ['Tracking parameters removed', 'Cleans utm_, fbclid, gclid…'],
+  amp:       ['AMP &amp; redirects unwrapped', 'Goes straight to the real site'],
+  ping:      ['Hyperlink auditing blocked', 'No click-tracking beacons'],
+  dnt:       ['Do Not Track + GPC', 'Legal opt-out signals'],
+  autoplay:  ['Autoplay blocked', 'Media needs a click'],
+  js:        ['JavaScript disabled', 'Maximum lockdown']
+};
+
+async function renderReport(){
+  // pull the freshest log from main rather than trusting the local copy
+  const log = (await window.grim?.blockedLog()) || blockedLog || [];
+
+  // headline: total blocked
+  document.getElementById('rep-blocked').textContent = (blocked || 0).toLocaleString();
+
+  // count how often each tracker host appeared
+  const counts = {};
+  log.forEach(e => { const h = e.host || ''; if (h) counts[h] = (counts[h] || 0) + 1; });
+  const ranked = Object.entries(counts).sort((a,b) => b[1] - a[1]);
+  document.getElementById('rep-domains').textContent = ranked.length.toLocaleString();
+
+  // how many protections are currently on (+1 for Tor when connected)
+  let active = Object.keys(PROTECTION_LABELS).filter(k => shieldState[k]).length;
+  const torOn = document.getElementById('toggle-tor')?.classList.contains('on');
+  if (torOn) active++;
+  document.getElementById('rep-shields').textContent = active;
+
+  // worst offenders, drawn as bars relative to the busiest one
+  const top = document.getElementById('rep-top');
+  if (!ranked.length) {
+    top.innerHTML = '<div class="s-row"><span class="s-desc">Nothing blocked yet — browse a little and come back.</span></div>';
+  } else {
+    const max = ranked[0][1];
+    top.innerHTML = ranked.slice(0, 12).map(([host, n]) => {
+      const pct = Math.max(4, Math.round(n / max * 100));
+      return '<div class="s-row" style="display:block">'
+        + '<div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:5px">'
+        + '<span class="s-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + host + '</span>'
+        + '<span class="s-desc" style="flex-shrink:0">' + n + '</span></div>'
+        + '<div style="height:4px;background:rgba(255,255,255,0.07);border-radius:2px;overflow:hidden">'
+        + '<div style="height:100%;width:' + pct + '%;background:var(--accent,#5b6af0);border-radius:2px"></div>'
+        + '</div></div>';
+    }).join('');
+  }
+
+  // which defences are on / off
+  const prot = document.getElementById('rep-protections');
+  let rows = '';
+  if (torOn) {
+    rows += '<div class="s-row"><div class="s-info"><span class="s-label">Tor routing</span>'
+      + '<span class="s-desc">A separate circuit per site — different exit IP for each</span></div>'
+      + '<span style="color:var(--success);font-size:12px;font-weight:600">On</span></div>';
+  }
+  rows += Object.entries(PROTECTION_LABELS).map(([key, [name, desc]]) => {
+    const on = !!shieldState[key];
+    return '<div class="s-row"><div class="s-info"><span class="s-label">' + name + '</span>'
+      + '<span class="s-desc">' + desc + '</span></div>'
+      + '<span style="font-size:12px;font-weight:600;color:' + (on ? 'var(--success)' : 'var(--muted)') + '">'
+      + (on ? 'On' : 'Off') + '</span></div>';
+  }).join('');
+  prot.innerHTML = rows;
+}
 
 // ── Reader mode ──
 async function doReaderMode(){
